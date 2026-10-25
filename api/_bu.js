@@ -10,9 +10,9 @@ function dataDe(o) {
   if (!o || typeof o !== "object") return null;
   const t = Object.values(o).filter(v => typeof v === "string").join(" ");
   let m = t.match(/(\d{2})\/(\d{2})\/(\d{4})\s+(\d{2}):(\d{2})(?::(\d{2}))?/);
-  if (m) return new Date(+m[3], m[2] - 1, +m[1], +m[4], +m[5], +(m[6] || 0)).getTime();
+  if (m) return Date.UTC(+m[3], m[2] - 1, +m[1], +m[4] + 3, +m[5], +(m[6] || 0));   // horário de Brasília (UTC−3), em qualquer servidor
   m = t.match(/(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})(?::(\d{2}))?/);
-  if (m) return new Date(+m[1], m[2] - 1, +m[3], +m[4], +m[5], +(m[6] || 0)).getTime();
+  if (m) return Date.UTC(+m[1], m[2] - 1, +m[3], +m[4] + 3, +m[5], +(m[6] || 0));
   return null;
 }
 /* ---- leitor do boletim binário (-bu.dat / .bu): ASN.1 DER, especificação do TSE (bu.asn1, IMPLICIT TAGS) ---- */
