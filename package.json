@@ -1,0 +1,7 @@
+{
+  "name": "painel-turnos",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Comparativo 1º -> 2º turno (Presidente) com dados abertos do TSE",
+  "engines": { "node": ">=18" }
+}

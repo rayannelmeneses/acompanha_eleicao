@@ -1,0 +1,4 @@
+{
+  "cleanUrls": true,
+  "functions": { "api/tse.js": { "maxDuration": 15 }, "api/lote.js": { "maxDuration": 30 } }
+}

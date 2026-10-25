@@ -1,0 +1,12 @@
+# token do bot do Telegram
+telegram.json
+
+# gerados em tempo de execução
+boletins-lidos.json
+monitor-estado.json
+cache-tse/
+
+node_modules/
+.vercel/
+.DS_Store
+.env*
