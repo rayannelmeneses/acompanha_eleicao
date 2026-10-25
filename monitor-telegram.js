@@ -28,6 +28,11 @@ const ARQ_ESTADO = path.join(__dirname, "monitor-estado.json"); // o que já foi
 let conf = {};
 try { conf = JSON.parse(fs.readFileSync(ARQ_CONF, "utf8")); } catch {}
 if (process.argv[2]) conf.token = process.argv[2].trim();
+// na nuvem (Railway etc.) o token e a conversa vêm das variáveis de ambiente, sem arquivo
+if (process.env.TELEGRAM_TOKEN) conf.token = process.env.TELEGRAM_TOKEN.trim();
+if (process.env.TELEGRAM_CHAT) conf.chat = process.env.TELEGRAM_CHAT.trim();
+if (process.env.TELEGRAM_CHATS) conf.chats = [...new Set([...(conf.chats || []), ...process.env.TELEGRAM_CHATS.split(/[,; ]+/).filter(Boolean)])];
+if (process.env.PAINEL_URL) conf.painel = process.env.PAINEL_URL.trim();
 if (!conf.token) {
   console.log("Falta o token do bot. Crie um com o @BotFather no Telegram e rode:\n  node monitor-telegram.js SEU_TOKEN");
   process.exit(1);
@@ -51,9 +56,46 @@ async function acharChat() {
   fs.writeFileSync(ARQ_CONF, JSON.stringify(conf, null, 2));
   console.log("Conversa encontrada e salva em telegram.json.");
 }
+// quem recebe: você + quem mandar mensagem para o bot + grupos em que o bot for colocado
+const destinos = () => { const l = [conf.chat, ...(conf.chats || [])].filter(x => x != null); return [...new Set(l.map(String))]; };
+function salvarConf() { try { fs.writeFileSync(ARQ_CONF, JSON.stringify(conf, null, 2)); } catch {} }
 async function enviar(texto) {
-  await tg("sendMessage", { chat_id: conf.chat, text: texto, disable_web_page_preview: true });
-  console.log(`[${new Date().toLocaleTimeString("pt-BR")}] enviado:\n${texto}\n`);
+  let ok = 0, ultimoErro = null;
+  for (const id of destinos()) {
+    try { await tg("sendMessage", { chat_id: id, text: texto, disable_web_page_preview: true }); ok++; }
+    catch (e) {
+      ultimoErro = e;
+      // a pessoa bloqueou o bot ou tirou ele do grupo: para de mandar para ela
+      if (/blocked|kicked|not found|deactivated|chat not found/i.test(e.message) && String(id) !== String(conf.chat)) {
+        conf.chats = (conf.chats || []).filter(x => String(x) !== String(id)); salvarConf();
+        console.log(`removido da lista: ${id} (${e.message})`);
+      } else console.log(`não consegui mandar para ${id}: ${e.message}`);
+    }
+  }
+  if (!ok && ultimoErro) throw ultimoErro;
+  console.log(`[${new Date().toLocaleTimeString("pt-BR")}] enviado para ${ok} ${ok === 1 ? "conversa" : "conversas"}:\n${texto}\n`);
+}
+// de tempos em tempos vê quem falou com o bot: entra na lista (ou sai, com /sair)
+let offsetTG = 0;
+async function verNovosContatos() {
+  let ups; try { ups = await tg("getUpdates", { offset: offsetTG, timeout: 0 }); } catch { return; }
+  for (const u of ups) {
+    if (typeof u.update_id === "number") offsetTG = u.update_id + 1;
+    const m = u.message || u.channel_post, mc = u.my_chat_member;
+    const chat = (m && m.chat) || (mc && mc.chat); if (!chat) continue;
+    const id = String(chat.id), nome = chat.title || [chat.first_name, chat.last_name].filter(Boolean).join(" ") || chat.username || id;
+    const saiu = (mc && /left|kicked/.test(mc.new_chat_member && mc.new_chat_member.status)) || (m && /^\/(sair|parar|stop)\b/i.test(m.text || ""));
+    const lista = new Set((conf.chats || []).map(String));
+    if (saiu) {
+      if (lista.delete(id)) { conf.chats = [...lista]; salvarConf(); console.log(`saiu da lista: ${nome}`);
+        if (m) tg("sendMessage", { chat_id: id, text: "Ok, não vou mais mandar as atualizações. Para voltar, mande /start." }).catch(() => {}); }
+      continue;
+    }
+    if (id === String(conf.chat) || lista.has(id)) continue;
+    lista.add(id); conf.chats = [...lista]; salvarConf();
+    console.log(`📲 nova conversa recebendo as atualizações: ${nome} (${destinos().length} no total)`);
+    tg("sendMessage", { chat_id: id, text: `✅ Pronto! Você vai receber as atualizações da apuração do 2º turno aqui.\n🔗 Painel: ${linkPainel()}\nPara parar, mande /sair.` }).catch(() => {});
+  }
 }
 
 /* ---------- reaproveita a leitura do site (public/dados.js) ---------- */
@@ -115,6 +157,8 @@ const gravar = () => { try { fs.writeFileSync(ARQ_ESTADO, JSON.stringify(mem, nu
 /* ---------- endereço do painel ---------- */
 function linkPainel() {
   if (conf.painel) return conf.painel;
+  if (process.env.RENDER_EXTERNAL_URL) return `${process.env.RENDER_EXTERNAL_URL.replace(/\/$/, "")}/?tela=exterior`;
+  if (process.env.RAILWAY_PUBLIC_DOMAIN) return `https://${process.env.RAILWAY_PUBLIC_DOMAIN}/?tela=exterior`;
   const ip = Object.values(require("os").networkInterfaces()).flat().find(i => i && i.family === "IPv4" && !i.internal);
   return `http://${ip ? ip.address : "localhost"}:${process.env.PORT || 3000}/?tela=exterior`;
 }
@@ -308,6 +352,10 @@ async function rodada() {
   console.log(`Bot conectado: @${eu.username}`);
   await acharChat();
   fs.writeFileSync(ARQ_CONF, JSON.stringify(conf, null, 2));
+  await verNovosContatos();
+  // no Render grátis o serviço dorme sem visitas: o próprio monitor visita o painel a cada 8 minutos
+  if (process.env.RENDER_EXTERNAL_URL) setInterval(() => { fetch(process.env.RENDER_EXTERNAL_URL.replace(/\/$/, "") + "/index.html").catch(() => {}); }, 8 * 60000);
+  setInterval(verNovosContatos, 20000);
   // o painel (mesmo processo) pega daqui tudo o que o monitor já leu, sem pedir nada ao TSE
   global.__estadoBU = () => ({ secoes: D.BU.secoes, lidos: D.BU.lidos, nomes: D.NOMES_ANO, status: D.BU.status, rodando: D.BU.rodando, situacao, pausaTSE: pausaRestante() });
   // botão "Atualizar [país]": lê agora só as urnas daquele país
